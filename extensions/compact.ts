@@ -115,6 +115,7 @@ export default function compact(pi: ExtensionAPI) {
       active,
       compacting,
       thresholdPercent: settings.thresholdPercent,
+      maxTokens: settings.maxTokens,
     });
     if (verdict.compact) runCompaction(ctx, false);
   });

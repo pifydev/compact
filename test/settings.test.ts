@@ -27,6 +27,14 @@ test("wrong types and unknown keys warn and fall back", () => {
   assert.ok(warnings.some((w) => w.includes('unknown setting "nope"')));
 });
 
+test("maxTokens: 0 is off, positive values are floored and capped", () => {
+  assert.equal(resolveSettings({ maxTokens: 0 }, {}).settings.maxTokens, 0);
+  assert.equal(resolveSettings({ maxTokens: 300_000 }, {}).settings.maxTokens, 300_000);
+  assert.equal(resolveSettings({ maxTokens: 50 }, {}).settings.maxTokens, 1000, "tiny positive floored to 1000");
+  assert.ok(resolveSettings({ maxTokens: 99_000_000 }, {}).settings.maxTokens < 99_000_000, "capped");
+  assert.equal(resolveSettings(undefined, { PIFY_COMPACT_MAX_TOKENS: "250000" }).settings.maxTokens, 250_000);
+});
+
 test("PIFY_COMPACT_THRESHOLD overrides", () => {
   assert.equal(resolveSettings({ thresholdPercent: 80 }, { PIFY_COMPACT_THRESHOLD: "60" }).settings.thresholdPercent, 60);
   const bad = resolveSettings(undefined, { PIFY_COMPACT_THRESHOLD: "soon" });

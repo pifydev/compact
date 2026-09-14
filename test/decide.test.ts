@@ -34,3 +34,14 @@ test("a custom threshold is respected", () => {
   assert.equal(shouldCompact({ percent: 50 }, state({ thresholdPercent: 50 })).compact, true);
   assert.equal(shouldCompact({ percent: 49 }, state({ thresholdPercent: 50 })).compact, false);
 });
+
+test("an absolute token ceiling fires where the percentage never would", () => {
+  // 300k of a 1M window is only 30% — under the 80% threshold — but past the ceiling.
+  const d = shouldCompact({ percent: 30, tokens: 300_000 }, state({ maxTokens: 250_000 }));
+  assert.equal(d.compact, true);
+  assert.match(d.reason, /ceiling/);
+  // Below both the percentage and the ceiling → no compaction.
+  assert.equal(shouldCompact({ percent: 30, tokens: 200_000 }, state({ maxTokens: 250_000 })).compact, false);
+  // Ceiling off (0) → percentage governs as before.
+  assert.equal(shouldCompact({ percent: 30, tokens: 900_000 }, state({ maxTokens: 0 })).compact, false);
+});

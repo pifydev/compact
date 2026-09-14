@@ -23,11 +23,12 @@ It stays **dormant unless pi's built-in compaction is off**, so the two never do
 ```json
 {
   "thresholdPercent": 80,
+  "maxTokens": 0,
   "enabled": true
 }
 ```
 
-`thresholdPercent` (1–99) is how full the window may get before compaction; `PIFY_COMPACT_THRESHOLD` overrides it for one run. Bad values fall back to the defaults with a warning.
+`thresholdPercent` (1–99) is how full the window may get before compaction. `maxTokens` is an absolute token ceiling that *also* triggers compaction (0 = off) — useful on very large windows where a percentage never trips before the session is already huge (80% of a 1M window is 800k tokens). Whichever comes first wins. `PIFY_COMPACT_THRESHOLD` and `PIFY_COMPACT_MAX_TOKENS` override them for one run. Bad values fall back to the defaults with a warning.
 
 ## Command
 
