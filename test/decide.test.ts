@@ -45,3 +45,41 @@ test("an absolute token ceiling fires where the percentage never would", () => {
   // Ceiling off (0) → percentage governs as before.
   assert.equal(shouldCompact({ percent: 30, tokens: 900_000 }, state({ maxTokens: 0 })).compact, false);
 });
+
+test("growth gate holds off the percentage trigger until real regrowth", () => {
+  // At the threshold but only 5k grown since the last compaction (baseline 90k)
+  // with a 20k minimum → held off.
+  const held = shouldCompact(
+    { percent: 82, tokens: 95_000 },
+    state({ minGrowthTokens: 20_000, lastCompactedTokens: 90_000 }),
+  );
+  assert.equal(held.compact, false);
+  assert.match(held.reason, /growth since last compaction/);
+  // Once it has grown past the minimum → compacts.
+  assert.equal(
+    shouldCompact({ percent: 82, tokens: 115_000 }, state({ minGrowthTokens: 20_000, lastCompactedTokens: 90_000 })).compact,
+    true,
+  );
+});
+
+test("growth gate is off by default and never blocks the first compaction", () => {
+  // minGrowthTokens 0 → gate inert even with a baseline present.
+  assert.equal(
+    shouldCompact({ percent: 82, tokens: 95_000 }, state({ minGrowthTokens: 0, lastCompactedTokens: 90_000 })).compact,
+    true,
+  );
+  // No baseline yet (null) → gate cannot apply, threshold governs.
+  assert.equal(
+    shouldCompact({ percent: 82, tokens: 95_000 }, state({ minGrowthTokens: 20_000, lastCompactedTokens: null })).compact,
+    true,
+  );
+});
+
+test("the ceiling ignores the growth gate — a hard ceiling is never held back", () => {
+  const d = shouldCompact(
+    { percent: 30, tokens: 300_000 },
+    state({ maxTokens: 250_000, minGrowthTokens: 100_000, lastCompactedTokens: 299_000 }),
+  );
+  assert.equal(d.compact, true);
+  assert.match(d.reason, /ceiling/);
+});

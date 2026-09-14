@@ -16,6 +16,10 @@ The trigger is `agent_settled` — the moment a run has fully settled, with no r
 
 It stays **dormant unless pi's built-in compaction is off**, so the two never double-compact — and if it can't determine pi's setting, it errs to dormant. It won't act on an unknown usage reading (the `null` pi reports right after a compaction), so it can't loop.
 
+### Degeneration guard
+
+Separately — and **always on, even while dormant** — a deterministic pass watches the outbound context for a different long-session death: a model that collapses into a long single-codepoint run (observed in the wild as a thinking block ending in thousands of `【`). pi replays prior assistant thinking to the provider on every later request, so a degenerated tail rides along every subsequent prompt, biases the model to continue the run, and the session dies in an abort loop. The guard collapses those runs in the **outbound view only** (persisted history is never touched) and, while the degenerated turn is the most recent one, appends a one-shot recovery notice. It costs no tokens and no model call; a clean context passes through untouched, so the prompt cache holds. (Adapted from [billion-context-pi](https://github.com/ranxianglei/billion-context-pi).)
+
 ## Settings
 
 `.pi/compact.json` (project) or `<agentDir>/compact.json` (global):
@@ -24,11 +28,20 @@ It stays **dormant unless pi's built-in compaction is off**, so the two never do
 {
   "thresholdPercent": 80,
   "maxTokens": 0,
+  "minGrowthTokens": 0,
+  "degenerationGuard": true,
+  "degenerationMinRun": 200,
   "enabled": true
 }
 ```
 
-`thresholdPercent` (1–99) is how full the window may get before compaction. `maxTokens` is an absolute token ceiling that *also* triggers compaction (0 = off) — useful on very large windows where a percentage never trips before the session is already huge (80% of a 1M window is 800k tokens). Whichever comes first wins. `PIFY_COMPACT_THRESHOLD` and `PIFY_COMPACT_MAX_TOKENS` override them for one run. Bad values fall back to the defaults with a warning.
+`thresholdPercent` (1–99) is how full the window may get before compaction. `maxTokens` is an absolute token ceiling that *also* triggers compaction (0 = off) — useful on very large windows where a percentage never trips before the session is already huge (80% of a 1M window is 800k tokens). Whichever comes first wins.
+
+`minGrowthTokens` (0 = off) gates the **percentage** trigger: even at the threshold, hold off until the context has grown by this many tokens since the last compaction. It stops the thrash where a compaction frees little, leaves usage near the threshold, and the next idle moment compacts again. The absolute ceiling ignores it — a hard ceiling is a safety and is never held back. (Idea from billion-context-pi's growth-gated triggering; off by default because a flat cadence can be better on repetitive workloads.)
+
+`degenerationGuard` (default on) and `degenerationMinRun` (minimum run length that counts as degeneration; floored at 8) tune the guard described above.
+
+`PIFY_COMPACT_THRESHOLD`, `PIFY_COMPACT_MAX_TOKENS`, and `PIFY_COMPACT_MIN_GROWTH` override the numeric knobs for one run. Bad values fall back to the defaults with a warning.
 
 ## Command
 

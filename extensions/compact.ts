@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { shouldCompact } from "../src/decide.ts";
+import { guardDegeneration } from "../src/degenerate.ts";
 import { DEFAULT_SETTINGS, resolveSettings, type CompactSettings } from "../src/settings.ts";
 
 type UiContext = ExtensionContext;
@@ -42,6 +43,8 @@ export default function compact(pi: ExtensionAPI) {
   let compacting = false;
   /** Per-session override from /autocompact on|off, wins over settings. */
   let sessionEnabled: boolean | null = null;
+  /** Tokens in use at the last compaction — the growth-gate baseline. */
+  let lastCompactedTokens: number | null = null;
 
   function loadSettings(cwd: string): string[] {
     for (const file of [join(cwd, ".pi", "compact.json"), join(getAgentDir(), "compact.json")]) {
@@ -88,6 +91,9 @@ export default function compact(pi: ExtensionAPI) {
         compacting = false;
         const before = result.tokensBefore;
         const after = result.estimatedTokensAfter;
+        // Reset the growth-gate baseline to the post-compaction size, so the
+        // next percentage-triggered compaction waits for real regrowth.
+        if (typeof after === "number") lastCompactedTokens = after;
         const delta = typeof after === "number" ? `~${fmt(before)} → ~${fmt(after)} tokens` : `~${fmt(before)} tokens`;
         if (ctx.hasUI) ctx.ui.notify(`${forced ? "Compacted" : "Auto-compacted"}: ${delta}.`, "info");
       },
@@ -116,8 +122,22 @@ export default function compact(pi: ExtensionAPI) {
       compacting,
       thresholdPercent: settings.thresholdPercent,
       maxTokens: settings.maxTokens,
+      minGrowthTokens: settings.minGrowthTokens,
+      lastCompactedTokens,
     });
     if (verdict.compact) runCompaction(ctx, false);
+  });
+
+  // A safety pass on the OUTBOUND context, independent of the compaction gate
+  // above (it runs even while dormant): collapse degenerate single-codepoint
+  // runs in assistant text/thinking so a poisoned tail can't ride every later
+  // prompt and loop the session into aborts. Returns undefined when the context
+  // is clean, so a healthy session is a true no-op and the prompt cache holds.
+  pi.on("context", async (event) => {
+    if (!settings.degenerationGuard) return undefined;
+    const msgs = event.messages as unknown[];
+    const guarded = guardDegeneration(msgs as never[], settings.degenerationMinRun, Date.now());
+    return guarded === msgs ? undefined : { messages: guarded as never };
   });
 
   pi.registerCommand("autocompact", {

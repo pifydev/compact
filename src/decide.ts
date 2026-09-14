@@ -22,6 +22,12 @@ export interface DecideState {
   thresholdPercent: number;
   /** Absolute token ceiling; 0 = off. Catches huge windows where a % never trips. */
   maxTokens?: number;
+  /** Minimum token growth since the last compaction before the PERCENT trigger */
+  /** fires again; 0 = off. The ceiling ignores it (a hard ceiling is safety). */
+  minGrowthTokens?: number;
+  /** Tokens in use at the last compaction, or null if none yet — the growth */
+  /** baseline. Ignored unless minGrowthTokens > 0. */
+  lastCompactedTokens?: number | null;
 }
 
 export interface Decision {
@@ -48,6 +54,21 @@ export function shouldCompact(usage: UsageLike | undefined, state: DecideState):
   if (percent < state.thresholdPercent) {
     return { compact: false, reason: `below threshold (${Math.round(percent)}% < ${state.thresholdPercent}%)` };
   }
+
+  // Growth gate (opt-in): even at the threshold, hold off until the context has
+  // grown by a real amount since the last compaction. Stops the thrash where a
+  // compaction frees little, leaves the percentage near the threshold, and the
+  // next settle compacts again. Only ever gates the percentage trigger — the
+  // absolute ceiling above is a hard safety and is never held back.
+  const minGrowth = state.minGrowthTokens ?? 0;
+  const base = state.lastCompactedTokens ?? null;
+  if (minGrowth > 0 && base !== null && tokens !== null) {
+    const growth = tokens - base;
+    if (growth < minGrowth) {
+      return { compact: false, reason: `only ${fmt(Math.max(0, growth))} growth since last compaction (< ${fmt(minGrowth)})` };
+    }
+  }
+
   return { compact: true, reason: `at ${Math.round(percent)}% of the window (threshold ${state.thresholdPercent}%)` };
 }
 

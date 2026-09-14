@@ -41,3 +41,29 @@ test("PIFY_COMPACT_THRESHOLD overrides", () => {
   assert.equal(bad.settings.thresholdPercent, DEFAULT_SETTINGS.thresholdPercent);
   assert.ok(bad.warnings.some((w) => w.includes("not a number")));
 });
+
+test("minGrowthTokens: 0 off by default, positive floored/capped, env override", () => {
+  assert.equal(DEFAULT_SETTINGS.minGrowthTokens, 0);
+  assert.equal(resolveSettings({ minGrowthTokens: 30_000 }, {}).settings.minGrowthTokens, 30_000);
+  assert.equal(resolveSettings({ minGrowthTokens: 50 }, {}).settings.minGrowthTokens, 1000, "tiny positive floored");
+  const capped = resolveSettings({ minGrowthTokens: 99_000_000 }, {});
+  assert.ok(capped.settings.minGrowthTokens < 99_000_000);
+  assert.ok(capped.warnings.some((w) => w.includes("minGrowthTokens clamped")));
+  assert.equal(resolveSettings(undefined, { PIFY_COMPACT_MIN_GROWTH: "40000" }).settings.minGrowthTokens, 40_000);
+});
+
+test("degenerationGuard: default on, boolean validated", () => {
+  assert.equal(DEFAULT_SETTINGS.degenerationGuard, true);
+  assert.equal(resolveSettings({ degenerationGuard: false }, {}).settings.degenerationGuard, false);
+  const bad = resolveSettings({ degenerationGuard: "yes" }, {});
+  assert.equal(bad.settings.degenerationGuard, true);
+  assert.ok(bad.warnings.some((w) => w.includes("degenerationGuard")));
+});
+
+test("degenerationMinRun: default 200, floored at 8", () => {
+  assert.equal(DEFAULT_SETTINGS.degenerationMinRun, 200);
+  assert.equal(resolveSettings({ degenerationMinRun: 500 }, {}).settings.degenerationMinRun, 500);
+  const floored = resolveSettings({ degenerationMinRun: 3 }, {});
+  assert.equal(floored.settings.degenerationMinRun, 8);
+  assert.ok(floored.warnings.some((w) => w.includes("degenerationMinRun clamped")));
+});
