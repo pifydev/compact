@@ -28,13 +28,26 @@ import { join } from "node:path";
 
 import { shouldCompact } from "../src/decide.ts";
 import { guardDegeneration } from "../src/degenerate.ts";
+import { anchorInstructions } from "../src/anchors.ts";
 import { DEFAULT_SETTINGS, resolveSettings, type CompactSettings } from "../src/settings.ts";
 
 type UiContext = ExtensionContext;
 
 const CUSTOM_INSTRUCTIONS =
   "Preserve the current task and enough state to resume it seamlessly after compaction: the goal, " +
-  "recent decisions, the files and commands in play, and any open thread. Summarize the rest.";
+  "recent decisions, the files and commands in play, and any open thread. Do not drop unfinished work, " +
+  "and do not make unfinished work sound finished — keep every pending check, tentative finding, blocker, " +
+  "and open question. Summarize the rest.";
+
+/** Rough token cost of one attached image, for next-turn overflow projection. */
+const IMAGE_TOKEN_ESTIMATE = 1600;
+
+/** Conservative token estimate for a pending prompt (chars/4 + per-image cost). */
+function estimatePromptTokens(text: string | undefined, images: unknown): number {
+  const t = typeof text === "string" ? Math.ceil(text.length / 4) : 0;
+  const img = Array.isArray(images) ? images.length * IMAGE_TOKEN_ESTIMATE : 0;
+  return t + img;
+}
 
 export default function compact(pi: ExtensionAPI) {
   let settings: CompactSettings = DEFAULT_SETTINGS;
@@ -68,6 +81,53 @@ export default function compact(pi: ExtensionAPI) {
     return parsed.warnings;
   }
 
+  /** Silent hot-reload: re-read the settings file, keeping the last-good values */
+  /** on a parse error so a mid-edit save never resets to defaults. */
+  function reloadSettings(cwd: string): void {
+    for (const file of [join(cwd, ".pi", "compact.json"), join(getAgentDir(), "compact.json")]) {
+      let raw: string;
+      try {
+        raw = readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+      try {
+        settings = resolveSettings(JSON.parse(raw)).settings;
+      } catch {
+        // keep the previously loaded settings
+      }
+      return;
+    }
+    settings = resolveSettings(undefined).settings;
+  }
+
+  /** contextWindow − reserveTokens (0 when disabled/unavailable): the point past */
+  /** which too little room is left for the model's response. */
+  function reserveCeiling(ctx: UiContext, window: number): number {
+    if (!settings.reserveAware || !window) return 0;
+    try {
+      const projectTrusted = (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted?.() ?? false;
+      const sm = SettingsManager.create(ctx.cwd, getAgentDir(), { projectTrusted });
+      const ceiling = window - Math.max(0, sm.getCompactionReserveTokens());
+      return ceiling > 0 ? ceiling : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Base instructions plus a deterministic anchor list, when enabled and present. */
+  function compactionInstructions(ctx: UiContext): string {
+    if (!settings.anchors) return CUSTOM_INSTRUCTIONS;
+    let extra = "";
+    try {
+      const branch = (ctx.sessionManager as { getBranch?: () => unknown[] }).getBranch?.() ?? [];
+      extra = anchorInstructions(branch);
+    } catch {
+      extra = "";
+    }
+    return extra ? `${CUSTOM_INSTRUCTIONS}\n\n${extra}` : CUSTOM_INSTRUCTIONS;
+  }
+
   /** True only when we can confirm pi's built-in compaction is OFF. */
   function piCompactionOff(ctx: UiContext): boolean {
     try {
@@ -83,24 +143,53 @@ export default function compact(pi: ExtensionAPI) {
     return sessionEnabled ?? settings.enabled;
   }
 
+  function onCompactComplete(ctx: UiContext, forced: boolean, result: { tokensBefore: number; estimatedTokensAfter?: number }): void {
+    compacting = false;
+    const before = result.tokensBefore;
+    const after = result.estimatedTokensAfter;
+    // Reset the growth-gate baseline to the post-compaction size, so the next
+    // percentage-triggered compaction waits for real regrowth.
+    if (typeof after === "number") lastCompactedTokens = after;
+    const delta = typeof after === "number" ? `~${fmt(before)} → ~${fmt(after)} tokens` : `~${fmt(before)} tokens`;
+    if (ctx.hasUI) ctx.ui.notify(`${forced ? "Compacted" : "Auto-compacted"}: ${delta}.`, "info");
+  }
+
+  function onCompactError(ctx: UiContext, err: Error): void {
+    compacting = false;
+    const msg = err?.message || String(err);
+    // "Nothing to compact" / "Already compacted" are benign — the context is
+    // simply already small enough; report as info, not a failure.
+    if (/nothing to compact|already compacted/i.test(msg)) {
+      if (ctx.hasUI) ctx.ui.notify(`Auto-compaction skipped: ${msg}.`, "info");
+      return;
+    }
+    if (ctx.hasUI) ctx.ui.notify(`Auto-compaction failed: ${msg}`, "warning");
+  }
+
   function runCompaction(ctx: UiContext, forced: boolean): void {
     compacting = true;
     ctx.compact({
-      customInstructions: CUSTOM_INSTRUCTIONS,
-      onComplete: (result) => {
-        compacting = false;
-        const before = result.tokensBefore;
-        const after = result.estimatedTokensAfter;
-        // Reset the growth-gate baseline to the post-compaction size, so the
-        // next percentage-triggered compaction waits for real regrowth.
-        if (typeof after === "number") lastCompactedTokens = after;
-        const delta = typeof after === "number" ? `~${fmt(before)} → ~${fmt(after)} tokens` : `~${fmt(before)} tokens`;
-        if (ctx.hasUI) ctx.ui.notify(`${forced ? "Compacted" : "Auto-compacted"}: ${delta}.`, "info");
-      },
-      onError: (err) => {
-        compacting = false;
-        if (ctx.hasUI) ctx.ui.notify(`Auto-compaction failed: ${err.message}`, "warning");
-      },
+      customInstructions: compactionInstructions(ctx),
+      onComplete: (result) => onCompactComplete(ctx, forced, result),
+      onError: (err) => onCompactError(ctx, err),
+    });
+  }
+
+  /** Trigger a compaction and resolve once it has settled (for the preflight). */
+  function compactAndWait(ctx: UiContext): Promise<void> {
+    return new Promise((resolve) => {
+      compacting = true;
+      ctx.compact({
+        customInstructions: compactionInstructions(ctx),
+        onComplete: (result) => {
+          onCompactComplete(ctx, false, result);
+          resolve();
+        },
+        onError: (err) => {
+          onCompactError(ctx, err);
+          resolve();
+        },
+      });
     });
   }
 
@@ -116,16 +205,47 @@ export default function compact(pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
+    reloadSettings(ctx.cwd); // pick up live edits to .pi/compact.json between turns
     if (!enabled()) return;
-    const verdict = shouldCompact(ctx.getContextUsage(), {
+    const usage = ctx.getContextUsage();
+    const verdict = shouldCompact(usage, {
       active,
       compacting,
       thresholdPercent: settings.thresholdPercent,
       maxTokens: settings.maxTokens,
+      reserveCeiling: reserveCeiling(ctx, usage?.contextWindow ?? 0),
       minGrowthTokens: settings.minGrowthTokens,
       lastCompactedTokens,
     });
     if (verdict.compact) runCompaction(ctx, false);
+  });
+
+  // Preflight: a large paste can overflow the very next turn, which agent_settled
+  // (reactive to CURRENT usage) can't foresee. On a fresh prompt while idle,
+  // project current tokens + the prompt's estimated cost and compact first if
+  // that would cross the threshold, so the turn goes out against a fitting window.
+  pi.on("input", async (event, ctx): Promise<{ action: "continue" }> => {
+    if (!settings.preflight || !enabled() || !active || compacting) return { action: "continue" };
+    if (event.streamingBehavior !== undefined) return { action: "continue" }; // mid-run steer/followUp
+    const usage = ctx.getContextUsage();
+    const window = usage?.contextWindow ?? 0;
+    const current = usage?.tokens ?? null;
+    if (!window || current === null) return { action: "continue" };
+    const projected = current + estimatePromptTokens(event.text, event.images);
+    const verdict = shouldCompact(
+      { percent: (projected / window) * 100, tokens: projected },
+      {
+        active,
+        compacting,
+        thresholdPercent: settings.thresholdPercent,
+        maxTokens: settings.maxTokens,
+        reserveCeiling: reserveCeiling(ctx, window),
+        minGrowthTokens: settings.minGrowthTokens,
+        lastCompactedTokens,
+      },
+    );
+    if (verdict.compact) await compactAndWait(ctx);
+    return { action: "continue" };
   });
 
   // A safety pass on the OUTBOUND context, independent of the compaction gate

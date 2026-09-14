@@ -22,6 +22,10 @@ export interface DecideState {
   thresholdPercent: number;
   /** Absolute token ceiling; 0 = off. Catches huge windows where a % never trips. */
   maxTokens?: number;
+  /** Reserve-aware ceiling (contextWindow − reserveTokens); 0 = off. Ensures */
+  /** enough room is left for the model's response — matters on small windows */
+  /** where a flat percentage can leave less headroom than the reserve. */
+  reserveCeiling?: number;
   /** Minimum token growth since the last compaction before the PERCENT trigger */
   /** fires again; 0 = off. The ceiling ignores it (a hard ceiling is safety). */
   minGrowthTokens?: number;
@@ -46,6 +50,15 @@ export function shouldCompact(usage: UsageLike | undefined, state: DecideState):
   // (80% of a 1M window is 800k tokens — far past when you'd want to compact).
   if (ceiling > 0 && tokens !== null && tokens >= ceiling) {
     return { compact: true, reason: `at ${fmt(tokens)} tokens (ceiling ${fmt(ceiling)})` };
+  }
+
+  // The reserve-aware ceiling: leave room for the model's response. On a small
+  // window a flat 80% can leave less than the reserve, so compacting at
+  // window−reserve is more correct. Like the ceiling, it is a hard safety that
+  // ignores the growth gate.
+  const reserveCeiling = state.reserveCeiling ?? 0;
+  if (reserveCeiling > 0 && tokens !== null && tokens >= reserveCeiling) {
+    return { compact: true, reason: `at ${fmt(tokens)} tokens (reserve ceiling ${fmt(reserveCeiling)})` };
   }
 
   // null right after a compaction, before the next response re-estimates — never

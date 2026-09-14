@@ -20,6 +20,12 @@ export interface CompactSettings {
   degenerationGuard: boolean;
   /** Minimum run length (codepoints) that counts as degeneration; floored at 8. */
   degenerationMinRun: number;
+  /** Also compact at contextWindow − reserveTokens, so a response always has room. */
+  reserveAware: boolean;
+  /** Steer pi's summary with a deterministic list of facts (files/goals/…) to keep. */
+  anchors: boolean;
+  /** Compact before a prompt is sent when it would push the window over threshold. */
+  preflight: boolean;
   /** Master switch; when false the extension never compacts. */
   enabled: boolean;
 }
@@ -30,6 +36,9 @@ export const DEFAULT_SETTINGS: CompactSettings = {
   minGrowthTokens: 0,
   degenerationGuard: true,
   degenerationMinRun: 200,
+  reserveAware: true,
+  anchors: true,
+  preflight: true,
   enabled: true,
 };
 
@@ -57,6 +66,9 @@ export function resolveSettings(
         "minGrowthTokens",
         "degenerationGuard",
         "degenerationMinRun",
+        "reserveAware",
+        "anchors",
+        "preflight",
       ]);
       for (const key of Object.keys(obj)) {
         if (!known.has(key)) warnings.push(`unknown setting "${key}"`);
@@ -88,6 +100,12 @@ export function resolveSettings(
         const v = obj.degenerationMinRun;
         if (typeof v === "number" && Number.isFinite(v)) settings.degenerationMinRun = clampMinRun(v, warnings);
         else warnings.push(`"degenerationMinRun" must be a number — using ${DEFAULT_SETTINGS.degenerationMinRun}`);
+      }
+      for (const key of ["reserveAware", "anchors", "preflight"] as const) {
+        if (key in obj) {
+          if (typeof obj[key] === "boolean") settings[key] = obj[key] as boolean;
+          else warnings.push(`"${key}" must be true or false — using ${DEFAULT_SETTINGS[key]}`);
+        }
       }
     }
   }

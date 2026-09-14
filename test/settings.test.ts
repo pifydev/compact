@@ -67,3 +67,17 @@ test("degenerationMinRun: default 200, floored at 8", () => {
   assert.equal(floored.settings.degenerationMinRun, 8);
   assert.ok(floored.warnings.some((w) => w.includes("degenerationMinRun clamped")));
 });
+
+test("reserveAware / anchors / preflight: booleans that default on", () => {
+  assert.equal(DEFAULT_SETTINGS.reserveAware, true);
+  assert.equal(DEFAULT_SETTINGS.anchors, true);
+  assert.equal(DEFAULT_SETTINGS.preflight, true);
+  const off = resolveSettings({ reserveAware: false, anchors: false, preflight: false }, {});
+  assert.equal(off.settings.reserveAware, false);
+  assert.equal(off.settings.anchors, false);
+  assert.equal(off.settings.preflight, false);
+  assert.deepEqual(off.warnings, []);
+  const bad = resolveSettings({ anchors: "yes" }, {});
+  assert.equal(bad.settings.anchors, true);
+  assert.ok(bad.warnings.some((w) => w.includes('"anchors" must be true or false')));
+});

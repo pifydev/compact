@@ -83,3 +83,26 @@ test("the ceiling ignores the growth gate — a hard ceiling is never held back"
   assert.equal(d.compact, true);
   assert.match(d.reason, /ceiling/);
 });
+
+test("the reserve-aware ceiling fires on a small window before the percentage would", () => {
+  // 32k window, reserve 16k → reserveCeiling 16k. At 18k tokens that is only 56%
+  // (under the 80% threshold) but past the reserve boundary → compact.
+  const d = shouldCompact({ percent: 56, tokens: 18_000 }, state({ reserveCeiling: 16_000 }));
+  assert.equal(d.compact, true);
+  assert.match(d.reason, /reserve ceiling/);
+  // Below the reserve boundary and below the percentage → no compaction.
+  assert.equal(shouldCompact({ percent: 40, tokens: 13_000 }, state({ reserveCeiling: 16_000 })).compact, false);
+});
+
+test("the reserve ceiling ignores the growth gate (hard safety)", () => {
+  const d = shouldCompact(
+    { percent: 90, tokens: 18_000 },
+    state({ reserveCeiling: 16_000, minGrowthTokens: 50_000, lastCompactedTokens: 17_900 }),
+  );
+  assert.equal(d.compact, true);
+  assert.match(d.reason, /reserve ceiling/);
+});
+
+test("reserveCeiling 0 is off", () => {
+  assert.equal(shouldCompact({ percent: 40, tokens: 13_000 }, state({ reserveCeiling: 0 })).compact, false);
+});
