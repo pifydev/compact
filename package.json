@@ -1,6 +1,6 @@
 {
   "name": "@pify/compact",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Proactive auto-compaction: when the context window crosses a threshold, compact between turns so a long session never hits the wall or needs a restart",
   "keywords": [
     "pi-package",

@@ -29,6 +29,7 @@ import { join } from "node:path";
 import { shouldCompact } from "../src/decide.ts";
 import { guardDegeneration } from "../src/degenerate.ts";
 import { anchorInstructions } from "../src/anchors.ts";
+import { dispatchCompact } from "../src/dispatch.ts";
 import { DEFAULT_SETTINGS, resolveSettings, type CompactSettings } from "../src/settings.ts";
 
 type UiContext = ExtensionContext;
@@ -168,7 +169,10 @@ export default function compact(pi: ExtensionAPI) {
 
   function runCompaction(ctx: UiContext, forced: boolean): void {
     compacting = true;
-    ctx.compact({
+    // dispatchCompact routes a SYNCHRONOUS throw from ctx.compact() through
+    // onError (→ onCompactError), so a synchronous failure still clears the
+    // `compacting` flag instead of stranding it true and disabling us for good.
+    dispatchCompact(ctx, {
       customInstructions: compactionInstructions(ctx),
       onComplete: (result) => onCompactComplete(ctx, forced, result),
       onError: (err) => onCompactError(ctx, err),
@@ -179,7 +183,10 @@ export default function compact(pi: ExtensionAPI) {
   function compactAndWait(ctx: UiContext): Promise<void> {
     return new Promise((resolve) => {
       compacting = true;
-      ctx.compact({
+      // A SYNCHRONOUS throw here would otherwise leave both the `compacting`
+      // flag stuck true and this promise unresolved, so the input hook never
+      // returns. Route it through onError, which clears the flag and resolves.
+      dispatchCompact(ctx, {
         customInstructions: compactionInstructions(ctx),
         onComplete: (result) => {
           onCompactComplete(ctx, false, result);
