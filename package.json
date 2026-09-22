@@ -1,6 +1,6 @@
 {
   "name": "@pify/compact",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Proactive auto-compaction: when the context window crosses a threshold, compact between turns so a long session never hits the wall or needs a restart",
   "keywords": [
     "pi-package",
@@ -62,9 +62,9 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@earendil-works/pi-tui": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.87.0",
+    "@earendil-works/pi-coding-agent": "^0.87.0",
+    "@earendil-works/pi-tui": "^0.87.0",
     "@types/node": "^22.10.2",
     "typebox": "^1.1.38",
     "typescript": "^5.7.2"

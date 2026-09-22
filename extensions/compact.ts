@@ -109,7 +109,11 @@ export default function compact(pi: ExtensionAPI) {
     try {
       const projectTrusted = (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted?.() ?? false;
       const sm = SettingsManager.create(ctx.cwd, getAgentDir(), { projectTrusted });
-      const ceiling = window - Math.max(0, sm.getCompactionReserveTokens());
+      // pi 0.86 added compaction.modelOverrides: reserveTokens may differ per
+      // model, and pi's own trigger reads it per model. Ask the same question
+      // pi asks, or the ceiling here and pi's diverge the moment a user sets one.
+      const model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+      const ceiling = window - Math.max(0, sm.getCompactionReserveTokens(model));
       return ceiling > 0 ? ceiling : 0;
     } catch {
       return 0;
