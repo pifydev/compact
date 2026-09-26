@@ -28,6 +28,7 @@ import { join } from "node:path";
 
 import { shouldCompact } from "../src/decide.ts";
 import { guardDegeneration } from "../src/degenerate.ts";
+import { pruneSupersededReads } from "../src/prune.ts";
 import { anchorInstructions } from "../src/anchors.ts";
 import { dispatchCompact } from "../src/dispatch.ts";
 import { DEFAULT_SETTINGS, resolveSettings, type CompactSettings } from "../src/settings.ts";
@@ -264,11 +265,17 @@ export default function compact(pi: ExtensionAPI) {
   // runs in assistant text/thinking so a poisoned tail can't ride every later
   // prompt and loop the session into aborts. Returns undefined when the context
   // is clean, so a healthy session is a true no-op and the prompt cache holds.
+  //
+  // Ahead of it, when enabled, a lossless reclaim: the earlier copy of a file
+  // that was read again later is blanked in the same outbound view, so the
+  // window fills slower and the summary, when it comes, has less to lose.
+  // Both passes hand back the same array reference when they change nothing.
   pi.on("context", async (event) => {
-    if (!settings.degenerationGuard) return undefined;
     const msgs = event.messages as unknown[];
-    const guarded = guardDegeneration(msgs as never[], settings.degenerationMinRun, Date.now());
-    return guarded === msgs ? undefined : { messages: guarded as never };
+    let out = msgs;
+    if (settings.pruneSupersededReads) out = pruneSupersededReads(out as never[]).messages as unknown[];
+    if (settings.degenerationGuard) out = guardDegeneration(out as never[], settings.degenerationMinRun, Date.now()) as unknown[];
+    return out === msgs ? undefined : { messages: out as never };
   });
 
   pi.registerCommand("autocompact", {

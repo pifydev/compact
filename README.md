@@ -41,6 +41,7 @@ Separately — and **always on, even while dormant** — a deterministic pass wa
   "minGrowthTokens": 0,
   "reserveAware": true,
   "anchors": true,
+  "pruneSupersededReads": false,
   "preflight": true,
   "degenerationGuard": true,
   "degenerationMinRun": 200,
@@ -55,6 +56,8 @@ Separately — and **always on, even while dormant** — a deterministic pass wa
 `minGrowthTokens` (0 = off) gates the **percentage** trigger: even at the threshold, hold off until the context has grown by this many tokens since the last compaction. It stops the thrash where a compaction frees little, leaves usage near the threshold, and the next idle moment compacts again. The absolute ceiling ignores it — a hard ceiling is a safety and is never held back. (Idea from billion-context-pi's growth-gated triggering; off by default because a flat cadence can be better on repetitive workloads.)
 
 `degenerationGuard` (default on) and `degenerationMinRun` (minimum run length that counts as degeneration; floored at 8) tune the guard described above.
+
+`pruneSupersededReads` (default off) reclaims context before any summary is needed: a file read twice keeps both copies in context, and only the later one can still be true, so the earlier copy is blanked — in the outbound view only, never in the saved history — with a one-line note saying which read replaced it. Lossless and deterministic, no model call. It is off by default because the provider caches the outbound view: the newest ~40k tokens are never touched and nothing is rewritten until at least ~20k characters can be reclaimed at once, but each first supersession still costs one prompt-cache miss. The plan file is never pruned. (The supersede half of oh-my-pi's pre-compaction pruning; its "useless result" half needs a core flag an extension cannot see.)
 
 `PIFY_COMPACT_THRESHOLD`, `PIFY_COMPACT_MAX_TOKENS`, and `PIFY_COMPACT_MIN_GROWTH` override the numeric knobs for one run. Bad values fall back to the defaults with a warning.
 
