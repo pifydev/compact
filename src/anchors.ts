@@ -64,6 +64,13 @@ export interface Anchors {
   goal: string | null;
   scopeChange: string | null;
   filesModified: string[];
+  /**
+   * The subset of filesModified that was also READ this session (same
+   * trimmed spelling). A file the agent read before changing it was actively
+   * worked on, not just written; the summary hint marks those (RW) so the
+   * summarizer keeps what was learned from them, not only that they changed.
+   */
+  filesBoth: string[];
   filesRead: string[];
   preferences: string[];
   commits: string[];
@@ -74,6 +81,7 @@ const EMPTY: Anchors = {
   goal: null,
   scopeChange: null,
   filesModified: [],
+  filesBoth: [],
   filesRead: [],
   preferences: [],
   commits: [],
@@ -179,10 +187,16 @@ export function extractAnchors(entries: unknown[]): Anchors {
       }
     }
 
+    // Trim once over the modified list so the (RW) subset spells its paths
+    // exactly as the modified list does.
+    const modifiedRaw = [...modified];
+    const modifiedTrimmed = trimCommonPrefix(modifiedRaw);
+    const both = modifiedRaw.flatMap((p, i) => (read.has(p) ? [modifiedTrimmed[i]!] : []));
     return {
       goal,
       scopeChange,
-      filesModified: trimCommonPrefix([...modified]).slice(0, 12),
+      filesModified: modifiedTrimmed.slice(0, 12),
+      filesBoth: both.slice(0, 12),
       filesRead: [...read].filter((p) => !modified.has(p)).slice(0, 8),
       preferences: [...new Set(prefs)].slice(0, 6),
       commits: [...new Set(commits)].slice(0, 4),
@@ -215,7 +229,10 @@ export function formatAnchors(a: Anchors): string {
   const lines: string[] = ["Preserve these exact facts in the summary — do not drop or generalize them:"];
   if (a.goal) lines.push(`- Task: ${a.goal}`);
   if (a.scopeChange) lines.push(`- Latest scope change: ${a.scopeChange}`);
-  if (a.filesModified.length) lines.push(`- Files modified: ${a.filesModified.join(", ")}`);
+  if (a.filesModified.length) {
+    const both = new Set(a.filesBoth);
+    lines.push(`- Files modified: ${a.filesModified.map((f) => (both.has(f) ? `${f} (RW)` : f)).join(", ")}`);
+  }
   if (a.filesRead.length) lines.push(`- Files read: ${a.filesRead.join(", ")}`);
   if (a.preferences.length) lines.push(`- Preferences: ${a.preferences.join(" | ")}`);
   if (a.commits.length) lines.push(`- Commits: ${a.commits.join(" | ")}`);

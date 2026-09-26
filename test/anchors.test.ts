@@ -79,3 +79,17 @@ test("never throws on malformed entries", () => {
   const a = extractAnchors([null, 42, "nonsense", {}, { message: null }, { message: { role: "user" } }] as unknown[]);
   assert.equal(hasAnchors(a), false);
 });
+
+test("a file that was read and then modified is marked (RW) in the hint, a written-only one is not", () => {
+  const a = extractAnchors([
+    toolCall("read", { path: "src/limiter.ts" }),
+    toolCall("edit", { path: "src/limiter.ts" }),
+    toolCall("write", { path: "src/new.ts" }),
+    toolCall("read", { path: "src/api.ts" }),
+  ]);
+  assert.deepEqual(a.filesBoth, ["limiter.ts"]);
+  const text = formatAnchors(a);
+  assert.match(text, /Files modified: limiter\.ts \(RW\), new\.ts/);
+  assert.match(text, /Files read: .*api\.ts/);
+  assert.ok(!/api\.ts \(RW\)/.test(text), "a read-only file carries no marker");
+});
