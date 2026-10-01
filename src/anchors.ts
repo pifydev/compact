@@ -168,6 +168,25 @@ export function extractAnchors(entries: unknown[]): Anchors {
           commits.push(hash ? `${hash[1]!.slice(0, 8)} ${pendingCommitMsg}` : pendingCommitMsg);
           pendingCommitMsg = null;
         }
+        // pi 0.99: calls a tool made itself (a codemode script) are not tool
+        // calls in the transcript; a bounded record sits on the script's
+        // result. Read file operations and commits from it, as pi's own
+        // compaction does, or a script-driven session anchors nothing.
+        const nested = isRecord(msg.nestedCalls) && Array.isArray(msg.nestedCalls.calls) ? msg.nestedCalls.calls : [];
+        for (const call of nested) {
+          if (!isRecord(call) || typeof call.name !== "string") continue;
+          const name = call.name.toLowerCase();
+          if (name === "bash") {
+            const cmd = isRecord(call.arguments) && typeof call.arguments.command === "string" ? call.arguments.command : "";
+            const m = COMMIT_RE.exec(cmd);
+            if (m) commits.push(m[1]!);
+            continue;
+          }
+          const path = toolPath(call.arguments);
+          if (!path) continue;
+          if (WRITE_TOOLS.has(name)) modified.add(path);
+          else if (READ_TOOLS.has(name)) read.add(path);
+        }
       }
     }
 

@@ -93,3 +93,27 @@ test("a file that was read and then modified is marked (RW) in the hint, a writt
   assert.match(text, /Files read: .*api\.ts/);
   assert.ok(!/api\.ts \(RW\)/.test(text), "a read-only file carries no marker");
 });
+
+test("file operations and commits made from a codemode script (nestedCalls on its result) are anchored", () => {
+  const a = extractAnchors([
+    user("Implement the limiter"),
+    {
+      role: "toolResult",
+      toolName: "codemode",
+      content: [{ type: "text", text: "ok" }],
+      nestedCalls: {
+        calls: [
+          { id: "c/1", name: "read", arguments: { path: "src/limiter.ts" }, status: "ok" },
+          { id: "c/2", name: "edit", arguments: { path: "src/limiter.ts" }, status: "ok" },
+          { id: "c/3", name: "write", arguments: { path: "src/new.ts" }, status: "ok" },
+          { id: "c/4", name: "bash", arguments: { command: 'git commit -m "add limiter"' }, status: "ok" },
+        ],
+        complete: true,
+      },
+    },
+  ]);
+  assert.ok(a.filesModified.some((f) => f.includes("limiter.ts")), JSON.stringify(a.filesModified));
+  assert.ok(a.filesModified.some((f) => f.includes("new.ts")));
+  assert.deepEqual(a.filesBoth, ["limiter.ts"]);
+  assert.ok(a.commits.some((c) => /add limiter/.test(c)), JSON.stringify(a.commits));
+});
